@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="Shift_JIS" standalone="yes" ?>
+<package><job id="xls_vba_dumper"><?job error="True" debug="True" ?>
+<script language="VBScript" src="./FFTLIB.vbs"></script>
+<!--
+ xls_vba_dumper - Excelブック内のVBAコードをテキストファイル出力
+ 
+ 使い方
+   このファイルに直接ソースファイルをドラッグドロップするか
+   SendToフォルダにおいて、右クリック送るメニューから実行
+
+   ※ツール｜マクロ｜セキュリティ｜信頼できる発行元｜
+     VBプロジェクトへのアクセス辺りのチェックが必要
+
+     2007以降の場合はExcelのオプション｜セキュリティ センター｜
+　　 セキュリティ センターの設定｜マクロの設定｜
+　　 VBAプロジェクトオブジェクトモデルへのアクセスを信頼
+
+ !-->
+<script language="VBScript">
+<![CDATA[
+
+Call Main
+
+Sub Main
+  Set coFFT = New FileFilterToolkit
+  With coFFT
+'    Call .GetOptArgs(WScript.Arguments)
+    Call .AddFiles(.GPN(.Path) & "\ExSQell.xlsm", False)
+    Call .SetMatchFilter("xls_vba_dumper", New xls_vba_dumper, "\.(xls|xlsm)$")
+    Call .Execute
+  End With
+End Sub
+
+'Xlsフィルタオブジェクト
+Class xls_vba_dumper
+  Public FilterName
+  Public FilterType
+
+  'フィルタ初期処理
+  Public Sub Initialize(argFFT)
+    FilterName = "xls_vba_dumper"
+    FilterType = "Xls"
+    With argFFT
+      .Options("XLS_Visible") = True
+    End With
+  End Sub
+
+  'フィルタ終了処理
+  Public Sub Terminate(argFFT)
+  End Sub
+
+  'ブック処理
+  Public Function ProcessBook(argFFT, argImpBook, argWrkFile)
+    Dim oCmp, oMod, oWTF
+    For Each oCmp In argImpBook.VBProject.VBComponents
+      Set oMod = oCmp.CodeModule
+      If oMod.CountOfLines > 0 Then
+        Set oWTF = OpenWriteTextFile(argFFT.Path & "\" & argImpBook.Name & "_" & oCmp.Name & ".bas")
+        With oWTF
+          .WriteLine oMod.Lines(1, oMod.CountOfLines)
+          .Close
+        End With
+      End If
+    Next
+    ProcessBook = False
+  End Function
+End Class
+
+]]>
+</script>
+</job></package>
