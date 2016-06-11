@@ -455,7 +455,7 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
 '                nMaxCol = nMinCol
 '
 '                Range(Cells(nMinRow + 1, nMinCol), Cells(nMaxRow, nMaxCol)).Value = ""
-                If Not GetCmdOut(sCmd, oRs, oFlds) Then
+                If Not ExecCmd(sCmd, oRs, oFlds) Then
                     Exit Sub
                 End If
 '                Application.ScreenUpdating = False
@@ -863,74 +863,6 @@ Private Function UpdateMaintenanceSheet()
     End If
 End Function
 
-'ExSQell暫定ロジック
-Private Function GetCmdOut(argCmd, argRs, argFlds)
-    Const wsHide = 0
-    Dim FSO, WSH, sVbs, oVbs, sCmd, sWrk, WRK, sLine, i, oFld
-    
-    argCmd = "bash --login -i -c """ & argCmd & """"
-
-    Set FSO = CreateObject("Scripting.FileSystemObject")
-    Set WSH = CreateObject("WScript.Shell")
-    sVbs = ActiveWorkbook.Path & "\ExSQell.vbs"
-    sWrk = ActiveWorkbook.Path & "\ExSQell.wrk"
-    Set oVbs = FSO.OpenTextFile(sVbs, 2, True)
-    With oVbs
-      .WriteLine "Dim WSH, FSO, WRK"
-      .WriteLine "Set WSH = WScript.CreateObject(""WScript.Shell"")"
-      .WriteLine "Set FSO = WScript.CreateObject(""Scripting.FileSystemObject"")"
-'      .WriteLine "WSH.CurrentDirectory = ""C:\cygwin64\bin"""
-      .WriteLine "Set PRC = WSH.Exec(""" & Replace(argCmd, """", """""") & """)"
-      .WriteLine "Set WRK = FSO.OpenTextFile(""" & sWrk & """,2,True)"
-      .WriteLine "Do Until PRC.StdOut.AtEndOfStream"
-      .WriteLine "  WRK.WriteLine PRC.StdOut.ReadLine"
-      .WriteLine "Loop"
-      .WriteLine "WRK.Close"
-'      .WriteLine "WScript.Echo """ & Replace(argCmd, """", """""") & """"
-      .Close
-    End With
-    sCmd = "CSCRIPT //NOLOGO """ & sVbs & """"
-    Call WSH.Run(sCmd, wsHide, True) 'Run(sCmd, [intWindowStyle], [bWaitOnReturn])
-    
-    Set argRs = CreateObject("ADODB.Recordset")
-    argRs.Fields.Append "Line", 200, 100
-    argRs.Open
-    
-    Set WRK = FSO.OpenTextFile(sWrk, 1, False)
-    Do Until WRK.AtEndOfStream
-        sLine = WRK.ReadLine
-        'Debug.Print sLine
-        argRs.AddNew
-        argRs("Line") = sLine
-        argRs.Update
-    Loop
-    WRK.Close
-    
-    argRs.MoveFirst
-    Dim oFlds As New Prop
-    With argRs.Fields
-        For i = 0 To .Count - 1
-            Set oFld = New Prop
-            oFld.Item("Title") = .Item(i).Name
-            oFld.Item("Name") = .Item(i).Name
-            oFld.Item("Type") = GetFldType(argRs, i)
-            
-            Set oFlds.Item() = oFld
-        Next
-        Set argFlds = oFlds
-    End With
-    
-'    Do Until argRs.EOF
-'        Debug.Print argRs("Line")
-'        argRs.MoveNext
-'    Loop
-    
-    Call FSO.DeleteFile(sWrk)
-    Call FSO.DeleteFile(sVbs)
-    
-    GetCmdOut = True
-End Function
-
 'オブジェクト一覧/定義の表示
 Sub ST_Which()
     Dim sWhich1 As String, sWhich2 As String, sWhich3 As String
@@ -977,7 +909,7 @@ Sub ST_Which()
         nMaxCol = nMinCol
         
         Range(Cells(nMinRow + 1, nMinCol), Cells(nMaxRow, nMaxCol)).Value = ""
-        If Not GetCmdOut(sCmd, oRs, oFlds) Then
+        If Not ExecCmd(sCmd, oRs, oFlds) Then
             Exit Sub
         End If
         Application.ScreenUpdating = False
@@ -2158,6 +2090,14 @@ Private Function GetConStr() As String
     End With
 End Function
 
+'シェルコマンドの取得
+Private Function GetShCmd() As String
+    
+    'ここも取りあえずこれで
+    GetShCmd = GetCfgSheet.Range("A27")
+    
+End Function
+
 Private Function GetConObj(argConStr, Optional argIsUpd = False)
     Dim sDSN As String, sUID As String, sPWD As String
     Dim aConStr, oCon, nConMode, nCmtMode, oConItem
@@ -3313,6 +3253,75 @@ KEYBREAK:
 END_FUNC:
     Application.EnableCancelKey = xlInterrupt
 '    Application.StatusBar = False
+End Function
+
+'ExSQell暫定ロジック
+Private Function ExecCmd(argCmd, argRs, argFlds)
+    Const wsHide = 0
+    Dim FSO, WSH, sVbs, oVbs, sCmd, sShCmd, sWrk, WRK, sLine, i, oFld
+    
+    sShCmd = GetShCmd
+    sCmd = sShCmd & " """ & argCmd & """"
+
+    Set FSO = CreateObject("Scripting.FileSystemObject")
+    Set WSH = CreateObject("WScript.Shell")
+    sVbs = ActiveWorkbook.Path & "\ExSQell.vbs"
+    sWrk = ActiveWorkbook.Path & "\ExSQell.wrk"
+    Set oVbs = FSO.OpenTextFile(sVbs, 2, True)
+    With oVbs
+      .WriteLine "Dim WSH, FSO, WRK"
+      .WriteLine "Set WSH = WScript.CreateObject(""WScript.Shell"")"
+      .WriteLine "Set FSO = WScript.CreateObject(""Scripting.FileSystemObject"")"
+'      .WriteLine "WSH.CurrentDirectory = ""C:\cygwin64\bin"""
+      .WriteLine "Set PRC = WSH.Exec(""" & Replace(sCmd, """", """""") & """)"
+      .WriteLine "Set WRK = FSO.OpenTextFile(""" & sWrk & """,2,True)"
+      .WriteLine "Do Until PRC.StdOut.AtEndOfStream"
+      .WriteLine "  WRK.WriteLine PRC.StdOut.ReadLine"
+      .WriteLine "Loop"
+      .WriteLine "WRK.Close"
+'      .WriteLine "WScript.Echo """ & Replace(sCmd, """", """""") & """"
+      .Close
+    End With
+    sCmd = "CSCRIPT //NOLOGO """ & sVbs & """"
+    Call WSH.Run(sCmd, wsHide, True) 'Run(sCmd, [intWindowStyle], [bWaitOnReturn])
+    
+    Set argRs = CreateObject("ADODB.Recordset")
+    argRs.Fields.Append "Line", 200, 100
+    argRs.Open
+    
+    Set WRK = FSO.OpenTextFile(sWrk, 1, False)
+    Do Until WRK.AtEndOfStream
+        sLine = WRK.ReadLine
+        'Debug.Print sLine
+        argRs.AddNew
+        argRs("Line") = sLine
+        argRs.Update
+    Loop
+    WRK.Close
+    
+    argRs.MoveFirst
+    Dim oFlds As New Prop
+    With argRs.Fields
+        For i = 0 To .Count - 1
+            Set oFld = New Prop
+            oFld.Item("Title") = .Item(i).Name
+            oFld.Item("Name") = .Item(i).Name
+            oFld.Item("Type") = GetFldType(argRs, i)
+            
+            Set oFlds.Item() = oFld
+        Next
+        Set argFlds = oFlds
+    End With
+    
+'    Do Until argRs.EOF
+'        Debug.Print argRs("Line")
+'        argRs.MoveNext
+'    Loop
+    
+    Call FSO.DeleteFile(sWrk)
+    Call FSO.DeleteFile(sVbs)
+    
+    ExecCmd = True
 End Function
 
 'クエリの実行
