@@ -53,6 +53,10 @@ Public csTplCell As String
 Public coTplRs
 Public coConObjs As New Prop
 
+Public coWSH
+Public coFSO
+Public csShCmd
+Public csUname
 
 'メッセージ定義
 Const ccUpdateDisclaim = "更新機能を使用するには「更新SQLの実行」設定を確認して下さい" & vbCrLf _
@@ -412,7 +416,7 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
         sConStr = GetConStr
         
         'ExSQell暫定ロジック
-        If Left(ActiveCell.Value, 2) = "$ " Then
+        If Left(ActiveCell.Value, 2) = "$ " And GetShCmd <> "" Then
                 sSQL = ""
                 sSQLType = "SELECT"
                 sShtName = ""
@@ -442,7 +446,7 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
         Case "SELECT", "TABLE", "RELOAD"
         
             'ExSQell暫定ロジック
-            If Left(ActiveCell.Value, 2) = "$ " Then
+            If Left(ActiveCell.Value, 2) = "$ " And GetShCmd <> "" Then
                 sCmd = Mid(ActiveCell.Value, 3)
                 
                 'MsgBox "ExSQell: " & sCmd
@@ -455,7 +459,7 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
 '                nMaxCol = nMinCol
 '
 '                Range(Cells(nMinRow + 1, nMinCol), Cells(nMaxRow, nMaxCol)).Value = ""
-                If Not ExecCmd(sCmd, oRs, oFlds) Then
+                If Not ExecShell(sCmd, oRs, oFlds) Then
                     Exit Sub
                 End If
 '                Application.ScreenUpdating = False
@@ -909,7 +913,7 @@ Sub ST_Which()
         nMaxCol = nMinCol
         
         Range(Cells(nMinRow + 1, nMinCol), Cells(nMaxRow, nMaxCol)).Value = ""
-        If Not ExecCmd(sCmd, oRs, oFlds) Then
+        If Not ExecShell(sCmd, oRs, oFlds) Then
             Exit Sub
         End If
         Application.ScreenUpdating = False
@@ -3256,50 +3260,76 @@ END_FUNC:
 End Function
 
 'ExSQell暫定ロジック
-Private Function ExecCmd(argCmd, argRs, argFlds)
-    Const wsHide = 0
-    Dim FSO, WSH, sVbs, oVbs, sCmd, sShCmd, sWrk, WRK, sLine, i, oFld
+'シェルコマンド実行
+Private Function ExecShell(argCmd, argRs, argFlds)
+    Dim sCmd, sWrk, WRK, sLine, i, oFld, sTmp, sShTmp, TMP
     
-    sShCmd = GetShCmd
-    sCmd = sShCmd & " """ & argCmd & """"
-
-    Set FSO = CreateObject("Scripting.FileSystemObject")
-    Set WSH = CreateObject("WScript.Shell")
-    sVbs = ActiveWorkbook.Path & "\ExSQell.vbs"
+    If IsEmpty(coWSH) Then
+        Set coWSH = CreateObject("WScript.Shell")
+    End If
+    
+    If IsEmpty(coFSO) Then
+        Set coFSO = CreateObject("Scripting.FileSystemObject")
+    End If
+    
     sWrk = ActiveWorkbook.Path & "\ExSQell.wrk"
-    Set oVbs = FSO.OpenTextFile(sVbs, 2, True)
-    With oVbs
-      .WriteLine "Dim WSH, FSO, WRK"
-      .WriteLine "Set WSH = WScript.CreateObject(""WScript.Shell"")"
-      .WriteLine "Set FSO = WScript.CreateObject(""Scripting.FileSystemObject"")"
-'      .WriteLine "WSH.CurrentDirectory = ""C:\cygwin64\bin"""
-      .WriteLine "Set PRC = WSH.Exec(""" & Replace(sCmd, """", """""") & """)"
-      .WriteLine "Set WRK = FSO.OpenTextFile(""" & sWrk & """,2,True)"
-      .WriteLine "Do Until PRC.StdOut.AtEndOfStream"
-      .WriteLine "  WRK.WriteLine PRC.StdOut.ReadLine"
-      .WriteLine "Loop"
-      .WriteLine "WRK.Close"
-'      .WriteLine "WScript.Echo """ & Replace(sCmd, """", """""") & """"
-      .Close
-    End With
-    sCmd = "CSCRIPT //NOLOGO """ & sVbs & """"
-    Call WSH.Run(sCmd, wsHide, True) 'Run(sCmd, [intWindowStyle], [bWaitOnReturn])
     
+    '初回とシェルコマンド変更時にunameを実行して実行環境を判別
+    If csShCmd <> GetShCmd Then
+        csShCmd = GetShCmd
+        
+        sCmd = csShCmd & " uname"
+        Call ExecCmd(sCmd, sWrk)
+        
+        csUname = "BoW"
+        
+        If coFSO.FileExists(sWrk) Then
+            Set WRK = coFSO.OpenTextFile(sWrk, 1, False)
+            If Not WRK Is Nothing Then
+                If Not WRK.AtEndOfStream Then
+                    csUname = WRK.ReadLine
+                End If
+            End If
+            WRK.Close
+            Call coFSO.DeleteFile(sWrk)
+        End If
+    End If
+    
+    '実行環境に応じて、リダイレクトするテンポラリファイルパスを算出
+    sTmp = coFSO.BuildPath(coFSO.GetSpecialFolder(2), coFSO.GetTempName)
+    sShTmp = LCase(Left(sTmp, 1)) & "/" & Replace(Mid(sTmp, 4), "\", "/")
+    If InStr(csUname, "CYGWIN") > 0 Then
+        sShTmp = "/cygdrive/" & sShTmp
+    ElseIf InStr(csUname, "MINGW") > 0 Then
+        sShTmp = "/" & sShTmp
+    Else 'Bash on Ubuntu on Windows
+        sShTmp = "/mnt/" & sShTmp
+    End If
+    
+    'シェルコマンドの実行
+    'sCmd = csShCmd & " """ & argCmd & """"
+    'Call ExecCmd(sCmd, sWrk)
+    sCmd = csShCmd & " """ & argCmd & " > " & sShTmp & """"
+    Call coWSH.Run(sCmd, vbHide, True)
+    
+    'テンポラリファイルを読み込んでローカルレコードセットを作成
     Set argRs = CreateObject("ADODB.Recordset")
     argRs.Fields.Append "Line", 200, 100
     argRs.Open
     
-    Set WRK = FSO.OpenTextFile(sWrk, 1, False)
-    Do Until WRK.AtEndOfStream
-        sLine = WRK.ReadLine
+    Set TMP = coFSO.OpenTextFile(sTmp, 1, False)
+    Do Until TMP.AtEndOfStream
+        sLine = TMP.ReadLine
         'Debug.Print sLine
         argRs.AddNew
         argRs("Line") = sLine
         argRs.Update
     Loop
-    WRK.Close
+    TMP.Close
     
     argRs.MoveFirst
+    
+    'フィールド情報の設定
     Dim oFlds As New Prop
     With argRs.Fields
         For i = 0 To .Count - 1
@@ -3307,7 +3337,6 @@ Private Function ExecCmd(argCmd, argRs, argFlds)
             oFld.Item("Title") = .Item(i).Name
             oFld.Item("Name") = .Item(i).Name
             oFld.Item("Type") = GetFldType(argRs, i)
-            
             Set oFlds.Item() = oFld
         Next
         Set argFlds = oFlds
@@ -3318,10 +3347,37 @@ Private Function ExecCmd(argCmd, argRs, argFlds)
 '        argRs.MoveNext
 '    Loop
     
-    Call FSO.DeleteFile(sWrk)
-    Call FSO.DeleteFile(sVbs)
+    Call coFSO.DeleteFile(sTmp)
     
-    ExecCmd = True
+    ExecShell = True
+End Function
+
+'コマンド実行 ※vbs経由で非表示同期実行、標準出力をワークファイルへ書き出し
+Private Function ExecCmd(argCmd, argWrk)
+    Dim sVbs, oVbs, sRun
+
+    With coFSO
+        sVbs = .GetParentFolderName(argWrk) & "\" & .GetBaseName(argWrk) & ".vbs"
+        Set oVbs = .OpenTextFile(sVbs, 2, True)
+    End With
+    
+    With oVbs
+      .WriteLine "Dim WSH, FSO, WRK"
+      .WriteLine "Set WSH = WScript.CreateObject(""WScript.Shell"")"
+      .WriteLine "Set FSO = WScript.CreateObject(""Scripting.FileSystemObject"")"
+'      .WriteLine "WSH.CurrentDirectory = ""C:\cygwin64\bin"""
+      .WriteLine "Set PRC = WSH.Exec(""" & Replace(argCmd, """", """""") & """)"
+      .WriteLine "Set WRK = FSO.OpenTextFile(""" & argWrk & """,2,True)"
+      .WriteLine "Do Until PRC.StdOut.AtEndOfStream"
+      .WriteLine "  WRK.WriteLine PRC.StdOut.ReadLine"
+      .WriteLine "Loop"
+      .WriteLine "WRK.Close"
+'      .WriteLine "WScript.Echo """ & Replace(argCmd, """", """""") & """"
+      .Close
+    End With
+    sRun = "CSCRIPT //NOLOGO """ & sVbs & """"
+    ExecCmd = coWSH.Run(sRun, vbHide, True) 'Run(sRunCmd, [intWindowStyle], [bWaitOnReturn])
+    Call coFSO.DeleteFile(sVbs)
 End Function
 
 'クエリの実行
@@ -4522,6 +4578,9 @@ Sub test()
 'Dim RE
 'Set RE = CreateObject("VBScript.RegExp")
 
-Call MakeSheet("ZZZ", ActiveSheet, coSTBook.Worksheets("WfOU_"))
+'Call MakeSheet("ZZZ", ActiveSheet, coSTBook.Worksheets("WfOU_"))
+
+'Call Shell("cmd /c C:\cygwin64\bin\bash --login -c uname > C:\ExSQell.tmp", vbHide)
+Call Shell("cmd /c ""C:\Program Files\Git\bin\bash"" --login -c uname > C:\ExSQell.tmp", vbHide)
 
 End Sub
