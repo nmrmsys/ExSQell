@@ -1011,6 +1011,9 @@ Sub ST_Which()
             Call MakeList(.Cells(nRow, 1), oRs, oFlds, oOpts)
             .Cells.AutoFilter Field:=1, Criteria1:="=" & sWhich, Operator:=xlAnd
             .Range("B:B").ColumnWidth = 0
+#If VBA7 Then
+            Application.PrintCommunication = False
+#End If
             With .PageSetup
                 .LeftHeader = ""
                 .TopMargin = Application.InchesToPoints(0.393700787401575)
@@ -1019,6 +1022,9 @@ Sub ST_Which()
                 .FitToPagesWide = 1
                 .FitToPagesTall = False
             End With
+#If VBA7 Then
+            Application.PrintCommunication = True
+#End If
         End With
         Application.ScreenUpdating = True
     Case "INDEX"
@@ -1049,6 +1055,9 @@ Sub ST_Which()
             End With
             Call MakeList(.Cells(nRow, 1), oRs, oFlds, oOpts)
             .Cells.AutoFilter Field:=1, Criteria1:="=" & sWhich, Operator:=xlAnd
+#If VBA7 Then
+            Application.PrintCommunication = False
+#End If
             With .PageSetup
                 .LeftHeader = ""
                 .TopMargin = Application.InchesToPoints(0.393700787401575)
@@ -1057,6 +1066,9 @@ Sub ST_Which()
                 .FitToPagesWide = 1
                 .FitToPagesTall = False
             End With
+#If VBA7 Then
+            Application.PrintCommunication = True
+#End If
         End With
     Case "PROCEDURE", "FUNCTION", "PACKAGE"
         If Not GetDBObjectInfo(sWhich, sObjType, oRs, oFlds, oOpts) Then
@@ -1092,6 +1104,9 @@ Sub ST_Which()
             End With
             Call MakeList(.Cells(nRow, 1), oRs, oFlds, oOpts)
             .Cells.AutoFilter Field:=1, Criteria1:="=" & sWhich, Operator:=xlAnd
+#If VBA7 Then
+            Application.PrintCommunication = False
+#End If
             With .PageSetup
                 .LeftHeader = ""
                 .TopMargin = Application.InchesToPoints(0.393700787401575)
@@ -1100,6 +1115,9 @@ Sub ST_Which()
                 .FitToPagesWide = 1
                 .FitToPagesTall = False
             End With
+#If VBA7 Then
+            Application.PrintCommunication = True
+#End If
         End With
     Case ""
     Case Else
@@ -1608,6 +1626,9 @@ Private Function MakeQpsSheet(argObjName)
             .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, Operator:= _
             xlBetween, Formula1:="昇順,降順"
         End With
+#If VBA7 Then
+        Application.PrintCommunication = False
+#End If
         With .PageSetup
             .PrintArea = "$B:$H"
             .LeftHeader = Replace(sShtName, "&", "")
@@ -1619,6 +1640,9 @@ Private Function MakeQpsSheet(argObjName)
             .FitToPagesTall = False
             .FitToPagesWide = 1
         End With
+#If VBA7 Then
+        Application.PrintCommunication = True
+#End If
         .Range("H2") = ""
         .Range("A3").Select
         ActiveWindow.FreezePanes = True
@@ -3692,8 +3716,16 @@ Private Function MakeList(argStart, argRs, argFlds, argOpts)
                 Next
             End If
             '印刷タイトル
-            .PageSetup.PrintTitleRows = argOpts.Item("行タイトル")
-            .PageSetup.PrintTitleColumns = argOpts.Item("列タイトル")
+#If VBA7 Then
+            Application.PrintCommunication = False
+#End If
+            With .PageSetup
+                .PrintTitleRows = argOpts.Item("行タイトル")
+                .PrintTitleColumns = argOpts.Item("列タイトル")
+            End With
+#If VBA7 Then
+            Application.PrintCommunication = True
+#End If
             '枠固定
             If argOpts.Item("枠固定セル") <> "" Then
                 .Range(argOpts.Item("枠固定セル")).Select
@@ -3883,6 +3915,9 @@ Private Function MakeList(argStart, argRs, argFlds, argOpts)
         End With
         
         'デフォルトのページ設定
+#If VBA7 Then
+        Application.PrintCommunication = False
+#End If
         With .PageSetup
             .LeftHeader = oSht.Name
             .LeftMargin = Application.InchesToPoints(0.393700787401575)
@@ -3890,6 +3925,9 @@ Private Function MakeList(argStart, argRs, argFlds, argOpts)
             .TopMargin = Application.InchesToPoints(0.78740157480315)
             .BottomMargin = Application.InchesToPoints(0.78740157480315)
         End With
+#If VBA7 Then
+        Application.PrintCommunication = True
+#End If
     
         nET = Timer()
         
