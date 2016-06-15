@@ -17,7 +17,7 @@ Let's running a SQL statement and Shell commands in Excel
 ## Requirement
 - Microsoft Windows
 - Microsoft Excel
-- Cygwin or "Bash on Ubuntu on Windows" (Optional:Run Shell Command)  
+- Cygwin and Other UNIX Clone Environments (Optional:Run Shell Command)<br>But "Bash on Ubuntu on Windows" Currently is not supported.
 
 ## Licence
 [MIT](http://opensource.org/licenses/mit-license.php)

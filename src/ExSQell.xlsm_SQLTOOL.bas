@@ -3336,20 +3336,56 @@ Private Function ExecShell(argCmd, argRs, argFlds)
     sCmd = csShCmd & " """ & argCmd & " > " & sShTmp & """"
     Call coWSH.Run(sCmd, vbHide, True)
     
-    'テンポラリファイルを読み込んでローカルレコードセットを作成
+    'ローカルレコードセット作成
     Set argRs = CreateObject("ADODB.Recordset")
     argRs.Fields.Append "Line", 200, 100
     argRs.Open
     
-    Set TMP = coFSO.OpenTextFile(sTmp, 1, False)
-    Do Until TMP.AtEndOfStream
-        sLine = TMP.ReadLine
-        'Debug.Print sLine
-        argRs.AddNew
-        argRs("Line") = sLine
-        argRs.Update
-    Loop
-    TMP.Close
+    'テンポラリファイルを読み込んでローカルレコードセットに追加
+    Dim nOutCnv, sCharset, nLineSeparator
+    nOutCnv = GetCfgVal("出力文字コード変換")
+    Select Case nOutCnv
+    Case 2 To 5 '「UTF-8 → SJIS」～「SJIS  → SJIS」
+        Select Case nOutCnv
+        Case 2 'UTF-8 → SJIS
+            sCharset = "utf-8"
+            nLineSeparator = 10 'adLF
+        Case 3 'EUC   → SJIS
+            sCharset = "euc-jp"
+            nLineSeparator = 10 'adLF
+        Case 4 'JIS   → SJIS
+            sCharset = "iso-2022-jp"
+            nLineSeparator = 10 'adLF
+        Case 5 'SJIS  → SJIS
+            sCharset = "shift_jis"
+            nLineSeparator = -1 'adCRLF
+        End Select
+        Set TMP = CreateObject("ADODB.Stream")
+        With TMP
+            .Charset = sCharset
+            .LineSeparator = nLineSeparator
+            .Open
+            Call .LoadFromFile(sTmp)
+            Do Until .EOS
+                sLine = .Readtext(-2) 'adReadLine
+                'Debug.Print sLine
+                argRs.AddNew
+                argRs("Line") = sLine
+                argRs.Update
+            Loop
+            .Close
+        End With
+    Case Else '1 「何も変換しない」
+        Set TMP = coFSO.OpenTextFile(sTmp, 1, False)
+        Do Until TMP.AtEndOfStream
+            sLine = TMP.ReadLine
+            'Debug.Print sLine
+            argRs.AddNew
+            argRs("Line") = sLine
+            argRs.Update
+        Loop
+        TMP.Close
+    End Select
     
     argRs.MoveFirst
     
