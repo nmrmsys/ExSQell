@@ -42,6 +42,7 @@ Const ccTPL_DEL = 3
 Const ccTPL_CRE = 4
 Const ccTPL_CLR = 5
 
+Const ccMaxShFldLen = 2000
 
 '変数定義
 Public coSTBook As Workbook
@@ -910,7 +911,11 @@ Sub ST_Which()
             nRow = nRow + 1
         Loop
         nMaxRow = nRow
-        nMaxCol = nMinCol
+        nCol = nMinCol + 1
+        Do Until Cells(nMinRow + 1, nCol).Value = ""
+            nCol = nCol + 1
+        Loop
+        nMaxCol = nCol
         
         Range(Cells(nMinRow + 1, nMinCol), Cells(nMaxRow, nMaxCol)).Value = ""
         If Not ExecShell(sCmd, oRs, oFlds) Then
@@ -3333,17 +3338,20 @@ Private Function ExecShell(argCmd, argRs, argFlds)
     'シェルコマンドの実行
     'sCmd = csShCmd & " """ & argCmd & """"
     'Call ExecCmd(sCmd, sWrk)
-    sCmd = csShCmd & " """ & argCmd & " > " & sShTmp & """"
+    sCmd = csShCmd & " """ & Replace(argCmd, """", """""") & " > " & sShTmp & """"
     Call coWSH.Run(sCmd, vbHide, True)
     
     'ローカルレコードセット作成
     Set argRs = CreateObject("ADODB.Recordset")
-    argRs.Fields.Append "Line", 200, 100
-    argRs.Open
     
-    'テンポラリファイルを読み込んでローカルレコードセットに追加
-    Dim nOutCnv, sCharset, nLineSeparator
+    
+    '各種設定情報の取得
+    Dim nOutCnv, sCharset, nLineSeparator, nFirstRowTitle, nFieldSep, sFieldName, arFields, nFieldCnt, nArrayCnt
     nOutCnv = GetCfgVal("出力文字コード変換")
+    nFirstRowTitle = GetCfgVal("1行目をタイトル行")
+    nFieldSep = GetCfgVal("フィールド区切り")
+    
+    'テンポラリファイルの読み込み方式に応じて前準備
     Select Case nOutCnv
     Case 2 To 5 '「UTF-8 → SJIS」～「SJIS  → SJIS」
         Select Case nOutCnv
@@ -3360,28 +3368,227 @@ Private Function ExecShell(argCmd, argRs, argFlds)
             sCharset = "shift_jis"
             nLineSeparator = -1 'adCRLF
         End Select
+        
+        'テンポラリファイルを読み込んでローカルレコードセットに追加
         Set TMP = CreateObject("ADODB.Stream")
         With TMP
             .Charset = sCharset
             .LineSeparator = nLineSeparator
             .Open
             Call .LoadFromFile(sTmp)
+            
+            '1行目の読み込み
+            If Not .EOS Then
+                sLine = .Readtext(-2) 'adReadLine
+                'Debug.Print sLine
+                
+                'フィールド区切り
+                If nFieldSep = 1 Then 'なし
+                    '1行目をタイトル行
+                    If nFirstRowTitle = 1 Then 'としない
+                        sFieldName = "Line"
+                    Else
+                        sFieldName = sLine
+                    End If
+                    argRs.Fields.Append sFieldName, 202, ccMaxShFldLen 'adVarWChar, 最大桁数
+                    nFieldCnt = 1
+                Else
+                    '行をフィールドに分割
+                    Select Case nFieldSep
+                    Case 2 '連続した空白文字
+                        arFields = SplitSh(sLine)
+                    Case 3 'カンマ
+                        arFields = SplitCsv(sLine)
+                    Case 4 'タブ文字
+                        arFields = Split(sLine, " ")
+                    End Select
+                    
+                    'フィールド数に応じてローカルレコードセットにフィールド追加
+                    For i = 0 To UBound(arFields)
+                        '1行目をタイトル行
+                        If nFirstRowTitle = 1 Then 'としない
+                            sFieldName = "Filed" & (i + 1)
+                        Else
+                            sFieldName = arFields(i)
+                        End If
+                        argRs.Fields.Append sFieldName, 202, ccMaxShFldLen 'adVarWChar, 最大桁数
+                    Next
+                    nFieldCnt = argRs.Fields.Count
+                End If
+                
+                'ローカルレコードセットをオープン
+                argRs.Open
+                
+                '1行目をタイトル行としない場合
+                If nFirstRowTitle = 1 Then
+                    '1行目のレコード追加
+                    argRs.AddNew
+                    
+                    'フィールド区切り
+                    If nFieldSep = 1 Then 'なし
+                        argRs(0) = sLine
+                    Else
+                        '列数に応じてフィールド値セット
+                        For i = 0 To nFieldCnt - 1
+                            argRs(i) = arFields(i)
+                        Next
+                    End If
+                    
+                    '1行目のレコード登録
+                    argRs.Update
+                End If
+               
+            Else '結果データレコード無し
+                'フィールド区切り
+                If nFieldSep = 1 Then 'なし
+                    argRs.Fields.Append "Line", 202 'adVarWChar
+                Else
+                    argRs.Fields.Append "Field1", 202 'adVarWChar
+                End If
+                argRs.Open
+            End If
+            
+            '2行目以降の読み込み
             Do Until .EOS
                 sLine = .Readtext(-2) 'adReadLine
                 'Debug.Print sLine
+                
                 argRs.AddNew
-                argRs("Line") = sLine
+                
+                'フィールド区切り
+                If nFieldSep = 1 Then 'なし
+                    argRs(0) = sLine
+                Else
+                    '行をフィールドに分割
+                    Select Case nFieldSep
+                    Case 2 '連続した空白文字
+                        arFields = SplitSh(sLine)
+                    Case 3 'カンマ
+                        arFields = SplitCsv(sLine)
+                    Case 4 'タブ文字
+                        arFields = Split(sLine, " ")
+                    End Select
+                    
+                    nArrayCnt = UBound(arFields) + 1
+                    
+                    '列数に応じてフィールド値セット
+                    For i = 0 To nFieldCnt - 1
+                        If i <= nArrayCnt - 1 Then
+                            argRs(i) = arFields(i)
+                        End If
+                    Next
+                End If
+                
                 argRs.Update
             Loop
             .Close
         End With
     Case Else '1 「何も変換しない」
+        'テンポラリファイルを読み込んでローカルレコードセットに追加
         Set TMP = coFSO.OpenTextFile(sTmp, 1, False)
+
+        '1行目の読み込み
+        If Not TMP.AtEndOfStream Then
+            sLine = TMP.ReadLine
+            'Debug.Print sLine
+            
+            'フィールド区切り
+            If nFieldSep = 1 Then 'なし
+                '1行目をタイトル行
+                If nFirstRowTitle = 1 Then 'としない
+                    sFieldName = "Line"
+                Else
+                    sFieldName = sLine
+                End If
+                argRs.Fields.Append sFieldName, 202, ccMaxShFldLen 'adVarWChar, 最大桁数
+                nFieldCnt = 1
+            Else
+                '行をフィールドに分割
+                Select Case nFieldSep
+                Case 2 '連続した空白文字
+                    arFields = SplitSh(sLine)
+                Case 3 'カンマ
+                    arFields = SplitCsv(sLine)
+                Case 4 'タブ文字
+                    arFields = Split(sLine, " ")
+                End Select
+                
+                'フィールド数に応じてローカルレコードセットにフィールド追加
+                For i = 0 To UBound(arFields)
+                    '1行目をタイトル行
+                    If nFirstRowTitle = 1 Then 'としない
+                        sFieldName = "Filed" & (i + 1)
+                    Else
+                        sFieldName = arFields(i)
+                    End If
+                    argRs.Fields.Append sFieldName, 202, ccMaxShFldLen 'adVarWChar, 最大桁数
+                Next
+                nFieldCnt = argRs.Fields.Count
+            End If
+            
+            'ローカルレコードセットをオープン
+            argRs.Open
+            
+            '1行目をタイトル行としない場合
+            If nFirstRowTitle = 1 Then
+                '1行目のレコード追加
+                argRs.AddNew
+                
+                'フィールド区切り
+                If nFieldSep = 1 Then 'なし
+                    argRs(0) = sLine
+                Else
+                    '列数に応じてフィールド値セット
+                    For i = 0 To nFieldCnt - 1
+                        argRs(i) = arFields(i)
+                    Next
+                End If
+                
+                '1行目のレコード登録
+                argRs.Update
+            End If
+           
+        Else '結果データレコード無し
+            'フィールド区切り
+            If nFieldSep = 1 Then 'なし
+                argRs.Fields.Append "Line", 202 'adVarWChar
+            Else
+                argRs.Fields.Append "Field1", 202 'adVarWChar
+            End If
+            argRs.Open
+        End If
+        
+        '2行目以降の読み込み
         Do Until TMP.AtEndOfStream
             sLine = TMP.ReadLine
             'Debug.Print sLine
+            
             argRs.AddNew
-            argRs("Line") = sLine
+            
+            'フィールド区切り
+            If nFieldSep = 1 Then 'なし
+                argRs(0) = sLine
+            Else
+                '行をフィールドに分割
+                Select Case nFieldSep
+                Case 2 '連続した空白文字
+                    arFields = SplitSh(sLine)
+                Case 3 'カンマ
+                    arFields = SplitCsv(sLine)
+                Case 4 'タブ文字
+                    arFields = Split(sLine, " ")
+                End Select
+                
+                nArrayCnt = UBound(arFields) + 1
+                
+                '列数に応じてフィールド値セット
+                For i = 0 To nFieldCnt - 1
+                    If i <= nArrayCnt - 1 Then
+                        argRs(i) = arFields(i)
+                    End If
+                Next
+            End If
+            
             argRs.Update
         Loop
         TMP.Close
@@ -3401,11 +3608,6 @@ Private Function ExecShell(argCmd, argRs, argFlds)
         Next
         Set argFlds = oFlds
     End With
-    
-'    Do Until argRs.EOF
-'        Debug.Print argRs("Line")
-'        argRs.MoveNext
-'    Loop
     
     Call coFSO.DeleteFile(sTmp)
     
@@ -4535,6 +4737,97 @@ Public Function Split(sStr As Variant, sDelim As Variant) As Variant
 
 End Function
 
+'連続した空白文字での分割
+Public Function SplitSh(sStr As Variant) As Variant
+    Dim vArray() As Variant
+    Dim i As Long
+    Dim j As Long
+    Dim sChr As String
+    Dim sTmp As String
+    
+    i = 0
+    
+    For j = 1 To Len(sStr) + 1
+        sChr = Mid(sStr, j, 1)
+        If sChr = " " Or sChr = "　" Then
+            If sTmp <> "" Then
+                ReDim Preserve vArray(0 To i)
+                vArray(i) = sTmp
+                sTmp = ""
+                i = i + 1
+            End If
+        Else
+            sTmp = sTmp & sChr
+        End If
+    Next
+    
+    If sTmp <> "" Then
+        ReDim Preserve vArray(0 To i)
+        vArray(i) = sTmp
+        sTmp = ""
+        i = i + 1
+    End If
+
+    SplitSh = vArray
+
+End Function
+
+'CSV文字列の分割
+Public Function SplitCsv(sStr As Variant) As Variant
+    Dim vArray() As Variant
+    Dim i As Long
+    Dim j As Long
+    Dim sChr As String
+    Dim sNex As String
+    Dim sTmp As String
+    Dim nLen1 As Long
+    Dim bQuo As Boolean
+    
+    i = 0
+    nLen1 = Len(sStr) + 1
+    
+    For j = 1 To nLen1
+        sChr = Mid(sStr, j, 1)
+        If j + 1 <= nLen1 Then
+            sNex = Mid(sStr, j + 1, 1)
+        Else
+            sNex = ""
+        End If
+        
+        If Not bQuo Then
+            If sChr = """" Then
+                bQuo = True
+            ElseIf sChr = "," Then
+                ReDim Preserve vArray(0 To i)
+                vArray(i) = Trim(sTmp)
+                sTmp = ""
+                i = i + 1
+            Else
+                sTmp = sTmp & sChr
+            End If
+        Else
+            If sChr = """" And sNex = """" Then
+                sTmp = sTmp & """"
+                j = j + 1
+            ElseIf sChr = """" Then
+                bQuo = False
+            Else
+                sTmp = sTmp & sChr
+            End If
+        End If
+    Next
+    
+    If sTmp <> "" Then
+        ReDim Preserve vArray(0 To i)
+        vArray(i) = Trim(sTmp)
+        sTmp = ""
+        i = i + 1
+    End If
+
+    SplitCsv = vArray
+
+End Function
+
 Public Function Replace(sStr As Variant, sOld As Variant, sNew As Variant) As String
     Dim nStart As Long, nMatch As Long, nOld As Long, nStr As Long
     Dim sTmp As String
@@ -4655,6 +4948,10 @@ Sub test()
 'Call MakeSheet("ZZZ", ActiveSheet, coSTBook.Worksheets("WfOU_"))
 
 'Call Shell("cmd /c C:\cygwin64\bin\bash --login -c uname > C:\ExSQell.tmp", vbHide)
-Call Shell("cmd /c ""C:\Program Files\Git\bin\bash"" --login -c uname > C:\ExSQell.tmp", vbHide)
+'Call Shell("cmd /c ""C:\Program Files\Git\bin\bash"" --login -c uname > C:\ExSQell.tmp", vbHide)
+
+Dim arFlds
+'arFlds = SplitSh("a    b      c        d       e")
+arFlds = SplitCsv("a , "" b,c "" , d")
 
 End Sub
