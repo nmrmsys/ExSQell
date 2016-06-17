@@ -19,6 +19,16 @@ Let's running a SQL statements and Shell commands in Excel
 - Microsoft Excel
 - (Optional: Run Shell Command) Cygwin or Other UNIX Environment Clone<br>Currently  "Bash on Ubuntu on Windows" is not supported. Only 64bit MS-Office Comming Soon.
 
+## Screenshot
+Settings Sheet<br>
+![ExSQell1.png](screenshot/ExSQell1.png) 
+
+Inline Output<br>
+![ExSQell2.png](screenshot/ExSQell2.png) 
+
+Auto Filter Sheet<br>
+![ExSQell3.png](screenshot/ExSQell3.png) 
+
 ## Licence
 [MIT](http://opensource.org/licenses/mit-license.php)
 
