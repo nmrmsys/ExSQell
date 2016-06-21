@@ -59,6 +59,9 @@ Public coFSO
 Public csShCmd
 Public csUname
 
+Const cnCurDirRowS = 29
+Const cnCurDirRowE = 34
+
 'メッセージ定義
 Const ccUpdateDisclaim = "更新機能を使用するには「更新SQLの実行」設定を確認して下さい" & vbCrLf _
                         & "なお本ツールは未だ開発中の為、本番環境への更新はお控え下さい"
@@ -400,6 +403,9 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
     Dim nFldType As Integer, nEffRecCnt As Long
     'ExSQell暫定ロジック
     Dim sCmd As String
+    Dim nDefExecMode As Integer
+    
+    nDefExecMode = GetDefExecMode '2 Shell実行モード
     
     'シート種別の判別
     sShtMode = ActiveSheet.Range("A1")
@@ -414,15 +420,24 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
         Exit Sub
     Case Else
         '通常クエリ実行、抽出条件入力
-        sConStr = GetConStr
         
         'ExSQell暫定ロジック
-        If Left(ActiveCell.Value, 2) = "$ " And GetShCmd <> "" Then
-                sSQL = ""
-                sSQLType = "SELECT"
-                sShtName = ""
-                Set oOpts = New Prop
+        If nDefExecMode = 2 Or Left(ActiveCell.Value, 2) = "$ " Then
+            
+            'Shell実行モードで先頭 $ が無い場合は補完
+            If nDefExecMode = 2 And Left(ActiveCell.Value, 1) <> "$" Then
+                ActiveCell.Value = "$ " & ActiveCell.Value
+            End If
+            
+            sCmd = Mid(ActiveCell.Value, 3)
+            
+            sSQL = ""
+            sSQLType = "SELECT"
+            sShtName = ""
+            Set oOpts = New Prop
         Else
+            sConStr = GetConStr
+            
             If IsMissing(argSql) Then
                 '現在セル位置からＳＱＬ文、タイプ、シート名の取得
                 sSQL = GetSql(sSQLType, sShtName)
@@ -447,27 +462,11 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
         Case "SELECT", "TABLE", "RELOAD"
         
             'ExSQell暫定ロジック
-            If Left(ActiveCell.Value, 2) = "$ " And GetShCmd <> "" Then
-                sCmd = Mid(ActiveCell.Value, 3)
-                
-                'MsgBox "ExSQell: " & sCmd
-                
-'                nRow = nMinRow + 1
-'                Do Until Cells(nRow, nMinCol).Value = ""
-'                    nRow = nRow + 1
-'                Loop
-'                nMaxRow = nRow
-'                nMaxCol = nMinCol
-'
-'                Range(Cells(nMinRow + 1, nMinCol), Cells(nMaxRow, nMaxCol)).Value = ""
+            If sCmd <> "" Then
+                'シェルコマンドの実行
                 If Not ExecShell(sCmd, oRs, oFlds) Then
                     Exit Sub
                 End If
-'                Application.ScreenUpdating = False
-'                Call MakeList(ActiveCell.Offset(1, 0), oRs, oFlds, oOpts)
-'                Cells(nMinRow, nMinCol).Select
-'                Application.ScreenUpdating = True
-                
             Else
                 'クエリの実行
                 If Not ExecQuery(sConStr, sSQL, sSQLType, oRs, oFlds, oOpts) Then
@@ -877,8 +876,12 @@ Sub ST_Which()
     Dim nRow As Long, nMinRow As Long, nMaxRow As Long
     Dim nCol As Long, nMinCol As Long, nMaxCol As Long
     Dim nFldIdx As Integer
+    
     'ExSQell暫定ロジック
     Dim sCmd As String
+    Dim nDefExecMode As Integer
+    
+    nDefExecMode = GetDefExecMode '2 Shell実行モード
     
     With ActiveCell
         sWhich1 = Trim(.Value)
@@ -901,8 +904,14 @@ Sub ST_Which()
     End With
     
     'ExSQell暫定ロジック
-    If Left(sWList, 2) = "$ " Then
-        sCmd = Mid(sWList, 3)
+    If nDefExecMode = 2 Or Left(ActiveCell.Value, 2) = "$ " Then
+        
+        'Shell実行モードで先頭 $ が無い場合は補完
+        If nDefExecMode = 2 And Left(ActiveCell.Value, 1) <> "$" Then
+            ActiveCell.Value = "$ " & ActiveCell.Value
+        End If
+    
+        sCmd = Mid(ActiveCell.Value, 3)
         
         'MsgBox "ExSQell: " & sCmd
         
@@ -2131,6 +2140,50 @@ Private Function GetShCmd() As String
     
 End Function
 
+'デフォルト実行モードの取得
+Private Function GetDefExecMode() As Integer
+    
+    '取りあえずこれで
+    Dim j As Integer
+    Dim nValiType As Integer
+    Dim aValiList, oCfgSht
+    Set oCfgSht = GetCfgSheet
+    With oCfgSht.Range("E1")
+        On Error Resume Next
+        nValiType = .Validation.Type
+        On Error GoTo 0
+        If nValiType = xlValidateList Then
+            aValiList = Split(.Validation.Formula1, ",")
+            For j = 0 To UBound(aValiList)
+                If aValiList(j) = .Value Then
+                    GetDefExecMode = j + 1
+                    Exit Function
+                End If
+            Next
+        End If
+    End With
+    GetDefExecMode = -1
+    
+End Function
+
+'カレントディレクトリの取得
+Private Function GetCurDir() As String
+    
+    '取りあえずこれで
+    Dim i As Integer
+    Dim oCfgSht
+    Set oCfgSht = GetCfgSheet
+    With oCfgSht
+        For i = cnCurDirRowS To cnCurDirRowE
+            If .Cells(i, 2) <> "" Then
+                GetCurDir = .Cells(i, 1)
+                Exit Function
+            End If
+        Next
+    End With
+    
+End Function
+
 Private Function GetConObj(argConStr, Optional argIsUpd = False)
     Dim sDSN As String, sUID As String, sPWD As String
     Dim aConStr, oCon, nConMode, nCmtMode, oConItem
@@ -3291,7 +3344,7 @@ End Function
 'ExSQell暫定ロジック
 'シェルコマンド実行
 Private Function ExecShell(argCmd, argRs, argFlds)
-    Dim sCmd, sWrk, WRK, sLine, i, oFld, sTmp, sShTmp, TMP
+    Dim sCmd, sWrk, WRK, sLine, i, oFld, sTmp, sShTmp, TMP, sCurDir
     
     If IsEmpty(coWSH) Then
         Set coWSH = CreateObject("WScript.Shell")
@@ -3335,10 +3388,14 @@ Private Function ExecShell(argCmd, argRs, argFlds)
         sShTmp = "/mnt/" & sShTmp
     End If
     
+    'カレントディレクトリ移動コマンド設定
+    sCurDir = GetCurDir
+    If sCurDir <> "" Then
+        sCurDir = "cd " & sCurDir & "; "
+    End If
+    
     'シェルコマンドの実行
-    'sCmd = csShCmd & " """ & argCmd & """"
-    'Call ExecCmd(sCmd, sWrk)
-    sCmd = csShCmd & " """ & Replace(argCmd, """", """""") & " > " & sShTmp & """"
+    sCmd = csShCmd & " """ & sCurDir & Replace(argCmd, """", """""") & " > " & sShTmp & """"
     Call coWSH.Run(sCmd, vbHide, True)
     
     'ローカルレコードセット作成
