@@ -17,7 +17,7 @@ Let's running a SQL statements and Shell commands in Excel
 ## Requirement
 - Microsoft Windows
 - Microsoft Excel
-- (Optional: Run Shell Command) Cygwin or Other UNIX Environment Clone<br>Currently  "Bash on Ubuntu on Windows" is not supported. Only 64bit MS-Office Comming Soon.
+- (Optional: Run Shell Command) Cygwin or Other UNIX Environment Clone<br>  "Bash on Ubuntu on Windows" only supports 64bit versions of MS-Office
 
 ## Screenshot
 Settings Sheet<br>
