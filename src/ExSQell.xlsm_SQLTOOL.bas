@@ -8,7 +8,8 @@ Option Explicit
 '定数定義
 Const ccAppTitle = "ExSQell"
 Const ccCfgShtName = "設定"
-Const cnCfgMaxRow = 30
+Const cnCfgMaxRow = 34
+Const cnConStrRow = 23
 Const ccLibShtName = "ライブラリ"
 Const ccQryShtName = "実行結果"
 Const ccTblShtName = "表定義"
@@ -59,8 +60,18 @@ Public coFSO
 Public csShCmd
 Public csUname
 
-Const cnCurDirRowS = 29
-Const cnCurDirRowE = 34
+'ExSQell暫定ロジック
+Const csShCmdCell = "D27"
+Const csSshCmdCell = "D29"
+Const csSudoCmdCell = "D31"
+Const cnConHostRowS = 27
+Const cnConHostRowE = 31
+Const cnCurDirRowS = 33
+Const cnCurDirRowE = 37
+Public cnExecMode As Integer
+Public csCmd As String
+Public csConHost As String
+Public cbSudo As Boolean
 
 'メッセージ定義
 Const ccUpdateDisclaim = "更新機能を使用するには「更新SQLの実行」設定を確認して下さい" & vbCrLf _
@@ -401,11 +412,6 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
     Dim sShtName As String, sShtMode As String
     Dim oRs, oFld, oFlds, oOpts, oSht
     Dim nFldType As Integer, nEffRecCnt As Long
-    'ExSQell暫定ロジック
-    Dim sCmd As String
-    Dim nDefExecMode As Integer
-    
-    nDefExecMode = GetDefExecMode '2 Shell実行モード
     
     'シート種別の判別
     sShtMode = ActiveSheet.Range("A1")
@@ -422,15 +428,8 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
         '通常クエリ実行、抽出条件入力
         
         'ExSQell暫定ロジック
-        If nDefExecMode = 2 Or Left(ActiveCell.Value, 2) = "$ " Then
-            
-            'Shell実行モードで先頭 $ が無い場合は補完
-            If nDefExecMode = 2 And Left(ActiveCell.Value, 1) <> "$" Then
-                ActiveCell.Value = "$ " & ActiveCell.Value
-            End If
-            
-            sCmd = Mid(ActiveCell.Value, 3)
-            
+        GetExecModeAndCmd
+        If cnExecMode = 2 Then '2 Shell実行モード
             sSQL = ""
             sSQLType = "SELECT"
             sShtName = ""
@@ -462,9 +461,9 @@ Sub ST_Query(Optional argSql, Optional argSqlTitle)
         Case "SELECT", "TABLE", "RELOAD"
         
             'ExSQell暫定ロジック
-            If sCmd <> "" Then
+            If csCmd <> "" Then
                 'シェルコマンドの実行
-                If Not ExecShell(sCmd, oRs, oFlds) Then
+                If Not ExecShell(csCmd, oRs, oFlds, csConHost, cbSudo) Then
                     Exit Sub
                 End If
             Else
@@ -877,12 +876,6 @@ Sub ST_Which()
     Dim nCol As Long, nMinCol As Long, nMaxCol As Long
     Dim nFldIdx As Integer
     
-    'ExSQell暫定ロジック
-    Dim sCmd As String
-    Dim nDefExecMode As Integer
-    
-    nDefExecMode = GetDefExecMode '2 Shell実行モード
-    
     With ActiveCell
         sWhich1 = Trim(.Value)
         sWhich2 = Trim(.Offset(0, 1).Value)
@@ -904,16 +897,10 @@ Sub ST_Which()
     End With
     
     'ExSQell暫定ロジック
-    If nDefExecMode = 2 Or Left(ActiveCell.Value, 2) = "$ " Then
+    GetExecModeAndCmd
+    If cnExecMode = 2 Then '2 Shell実行モード
         
-        'Shell実行モードで先頭 $ が無い場合は補完
-        If nDefExecMode = 2 And Left(ActiveCell.Value, 1) <> "$" Then
-            ActiveCell.Value = "$ " & ActiveCell.Value
-        End If
-    
-        sCmd = Mid(ActiveCell.Value, 3)
-        
-        'MsgBox "ExSQell: " & sCmd
+        'MsgBox "ExSQell: " & csCmd
         
         nRow = nMinRow + 1
         Do Until Cells(nRow, nMinCol).Value = ""
@@ -927,7 +914,7 @@ Sub ST_Which()
         nMaxCol = nCol
         
         Range(Cells(nMinRow + 1, nMinCol), Cells(nMaxRow, nMaxCol)).Value = ""
-        If Not ExecShell(sCmd, oRs, oFlds) Then
+        If Not ExecShell(csCmd, oRs, oFlds, csConHost, cbSudo) Then
             Exit Sub
         End If
         Application.ScreenUpdating = False
@@ -2122,7 +2109,7 @@ Private Function GetConStr() As String
                 GetConStr = .Cells(1, 1)
                 Exit Function
             End If
-            For i = 1 To cnCfgMaxRow
+            For i = 1 To cnConStrRow
                 If oCfgSht.Cells(i, 2) <> "" Then
                     GetConStr = oCfgSht.Cells(i, 1)
                     Exit Function
@@ -2132,21 +2119,16 @@ Private Function GetConStr() As String
     End With
 End Function
 
-'シェルコマンドの取得
-Private Function GetShCmd() As String
-    
-    'ここも取りあえずこれで
-    GetShCmd = GetCfgSheet.Range("A27")
-    
-End Function
-
-'デフォルト実行モードの取得
-Private Function GetDefExecMode() As Integer
-    
-    '取りあえずこれで
+'実行モードとコマンドの取得
+Private Function GetExecModeAndCmd() As Integer
+   
     Dim j As Integer
     Dim nValiType As Integer
     Dim aValiList, oCfgSht
+    Dim sPrompt, sCmds, arCmds
+    
+    'デフォルト実行モードの取得
+    cnExecMode = -1
     Set oCfgSht = GetCfgSheet
     With oCfgSht.Range("E1")
         On Error Resume Next
@@ -2156,14 +2138,72 @@ Private Function GetDefExecMode() As Integer
             aValiList = Split(.Validation.Formula1, ",")
             For j = 0 To UBound(aValiList)
                 If aValiList(j) = .Value Then
-                    GetDefExecMode = j + 1
-                    Exit Function
+                    cnExecMode = j + 1
+                    Exit For
                 End If
             Next
         End If
     End With
-    GetDefExecMode = -1
     
+    '接続先ホスト取得
+    csConHost = ""
+    For j = cnConHostRowS To cnConHostRowE
+        If oCfgSht.Cells(j, 2) <> "" Then
+            csConHost = oCfgSht.Cells(j, 1)
+            Exit For
+        End If
+    Next
+    If ActiveSheet.Range("A1") <> "" Then
+        csConHost = ActiveSheet.Range("A1")
+    End If
+    
+    'アクティブセルのプロンプト文字列チェック
+    csCmd = ""
+    cbSudo = False
+    sCmds = ActiveCell.Value
+    sPrompt = "$#"
+    For j = 1 To Len(sPrompt)
+        'コマンドの存在チェック
+        arCmds = Split(sCmds, Mid(sPrompt, j, 1) & " ")
+        If UBound(arCmds) >= 1 Then
+            If arCmds(0) = "" Then
+                sCmds = Right(sCmds, Len(sCmds) - 2)
+            Else
+                csConHost = arCmds(0)
+                sCmds = Right(sCmds, Len(sCmds) - InStr(sCmds, Mid(sPrompt, j, 1) & " ") - 1)
+            End If
+            If sCmds <> "" Then
+                If Mid(sPrompt, j, 1) = "#" Then
+                    cbSudo = True
+                End If
+                cnExecMode = 2
+                csCmd = sCmds
+                Exit For
+            End If
+        End If
+    Next
+    
+    'Shell実行モードで先頭 $ が無い場合は補完
+    If cnExecMode = 2 And csCmd = "" Then
+        csCmd = ActiveCell.Value
+        ActiveCell.Value = "$ " & ActiveCell.Value
+    End If
+    
+End Function
+
+'シェルコマンドの取得
+Private Function GetShCmd() As String
+    GetShCmd = GetCfgSheet.Range(csShCmdCell)
+End Function
+
+'sshコマンドの取得
+Private Function GetSshCmd() As String
+    GetSshCmd = GetCfgSheet.Range(csSshCmdCell)
+End Function
+
+'sudoコマンドの取得
+Private Function GetSudoCmd() As String
+    GetSudoCmd = GetCfgSheet.Range(csSudoCmdCell)
 End Function
 
 'カレントディレクトリの取得
@@ -3341,9 +3381,13 @@ END_FUNC:
 '    Application.StatusBar = False
 End Function
 
+Private Function DQEsc(argCmd)
+    DQEsc = Replace(argCmd, """", """""")
+End Function
+
 'ExSQell暫定ロジック
 'シェルコマンド実行
-Private Function ExecShell(argCmd, argRs, argFlds)
+Private Function ExecShell(argCmd, argRs, argFlds, Optional argConHost = "", Optional argSudo = False)
     Dim sCmd, sWrk, WRK, sLine, i, oFld, sTmp, sShTmp, TMP, sCurDir
     
     If IsEmpty(coWSH) Then
@@ -3388,14 +3432,27 @@ Private Function ExecShell(argCmd, argRs, argFlds)
         sShTmp = "/mnt/" & sShTmp
     End If
     
+    sCmd = argCmd
+    
     'カレントディレクトリ移動コマンド設定
     sCurDir = GetCurDir
     If sCurDir <> "" Then
-        sCurDir = "cd " & sCurDir & "; "
+        sCmd = "cd " & sCurDir & "; " & sCmd
+    End If
+    
+    'sudoコマンド設定
+    If argSudo Then
+        sCmd = GetSudoCmd & " """ & DQEsc(sCmd) & """"
+    End If
+    
+    'sshコマンド設定
+    If argConHost <> "" Then
+        sCmd = GetSshCmd & " " & argConHost & " """ & DQEsc(sCmd) & """"
     End If
     
     'シェルコマンドの実行
-    sCmd = csShCmd & " """ & sCurDir & Replace(argCmd, """", """""") & " > " & sShTmp & """"
+    sCmd = csShCmd & " """ & DQEsc(sCmd) & " > " & sShTmp & """"
+    Debug.Print sCmd
     Call coWSH.Run(sCmd, vbHide, True)
     
     'ローカルレコードセット作成
@@ -3685,13 +3742,13 @@ Private Function ExecCmd(argCmd, argWrk)
       .WriteLine "Set WSH = WScript.CreateObject(""WScript.Shell"")"
       .WriteLine "Set FSO = WScript.CreateObject(""Scripting.FileSystemObject"")"
 '      .WriteLine "WSH.CurrentDirectory = ""C:\cygwin64\bin"""
-      .WriteLine "Set PRC = WSH.Exec(""" & Replace(argCmd, """", """""") & """)"
+      .WriteLine "Set PRC = WSH.Exec(""" & DQEsc(argCmd) & """)"
       .WriteLine "Set WRK = FSO.OpenTextFile(""" & argWrk & """,2,True)"
       .WriteLine "Do Until PRC.StdOut.AtEndOfStream"
       .WriteLine "  WRK.WriteLine PRC.StdOut.ReadLine"
       .WriteLine "Loop"
       .WriteLine "WRK.Close"
-'      .WriteLine "WScript.Echo """ & Replace(argCmd, """", """""") & """"
+'      .WriteLine "WScript.Echo """ & DQEsc(argCmd) & """"
       .Close
     End With
     sRun = "CSCRIPT //NOLOGO """ & sVbs & """"
@@ -5009,6 +5066,8 @@ Sub test()
 
 Dim arFlds
 'arFlds = SplitSh("a    b      c        d       e")
-arFlds = SplitCsv("a , "" b,c "" , d")
+'arFlds = SplitCsv("a , "" b,c "" , d")
+
+arFlds = Split("$ls", "$ ")
 
 End Sub
