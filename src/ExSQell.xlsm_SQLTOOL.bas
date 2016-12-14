@@ -72,6 +72,8 @@ Public cnExecMode As Integer
 Public csCmd As String
 Public csConHost As String
 Public cbSudo As Boolean
+Public csRangeRedirectIn As String
+Public csRangeRedirectOut As String
 
 'メッセージ定義
 Const ccUpdateDisclaim = "更新機能を使用するには「更新SQLの実行」設定を確認して下さい" & vbCrLf _
@@ -913,12 +915,22 @@ Sub ST_Which()
         Loop
         nMaxCol = nCol
         
-        Range(Cells(nMinRow + 1, nMinCol), Cells(nMaxRow, nMaxCol)).Value = ""
+        If csRangeRedirectOut = "" Then
+            Range(Cells(nMinRow + 1, nMinCol), Cells(nMaxRow, nMaxCol)).Value = ""
+        End If
+        
         If Not ExecShell(csCmd, oRs, oFlds, csConHost, cbSudo) Then
             Exit Sub
         End If
         Application.ScreenUpdating = False
-        Call MakeList(ActiveCell.Offset(1, 0), oRs, oFlds, oOpts)
+        
+        '出力セル範囲リダイレクト指定有り
+        If csRangeRedirectOut <> "" Then
+            Call MakeList(Range(csRangeRedirectOut), oRs, oFlds, oOpts)
+        Else
+            Call MakeList(ActiveCell.Offset(1, 0), oRs, oFlds, oOpts)
+        End If
+        
         Cells(nMinRow, nMinCol).Select
         Application.ScreenUpdating = True
         
@@ -2177,6 +2189,31 @@ Private Function GetExecModeAndCmd() As Integer
                     cbSudo = True
                 End If
                 cnExecMode = 2
+                
+                'セル範囲リダイレクト関連
+                csRangeRedirectIn = ""
+                csRangeRedirectOut = ""
+                arCmds = Split(sCmds, " <: ")
+                If UBound(arCmds) >= 1 Then
+                    sCmds = arCmds(0)
+                    csRangeRedirectIn = arCmds(1)
+                End If
+                arCmds = Split(sCmds, " :> ")
+                If UBound(arCmds) >= 1 Then
+                    csRangeRedirectIn = arCmds(0)
+                    sCmds = arCmds(1)
+                End If
+                arCmds = Split(sCmds, " >: ")
+                If UBound(arCmds) >= 1 Then
+                    sCmds = arCmds(0)
+                    csRangeRedirectOut = arCmds(1)
+                End If
+                arCmds = Split(sCmds, " :< ")
+                If UBound(arCmds) >= 1 Then
+                    csRangeRedirectOut = arCmds(0)
+                    sCmds = arCmds(1)
+                End If
+                
                 csCmd = sCmds
                 Exit For
             End If
@@ -3450,14 +3487,8 @@ Private Function ExecShell(argCmd, argRs, argFlds, Optional argConHost = "", Opt
         sCmd = GetSshCmd & " " & argConHost & " """ & DQEsc(sCmd) & """"
     End If
     
-    'シェルコマンドの実行
+    'シェルコマンド設定
     sCmd = csShCmd & " """ & DQEsc(sCmd) & " > " & sShTmp & """"
-    Debug.Print sCmd
-    Call coWSH.Run(sCmd, vbHide, True)
-    
-    'ローカルレコードセット作成
-    Set argRs = CreateObject("ADODB.Recordset")
-    
     
     '各種設定情報の取得
     Dim nOutCnv, sCharset, nLineSeparator, nFirstRowTitle, nFieldSep, sFieldName, arFields, nFieldCnt, nArrayCnt
@@ -3465,142 +3496,61 @@ Private Function ExecShell(argCmd, argRs, argFlds, Optional argConHost = "", Opt
     nFirstRowTitle = GetCfgVal("1行目をタイトル行")
     nFieldSep = GetCfgVal("フィールド区切り")
     
-    'テンポラリファイルの読み込み方式に応じて前準備
+    '読み込み方式に応じてパラメータセット
     Select Case nOutCnv
-    Case 2 To 5 '「UTF-8 → SJIS」～「SJIS  → SJIS」
-        Select Case nOutCnv
-        Case 2 'UTF-8 → SJIS
-            sCharset = "utf-8"
-            nLineSeparator = 10 'adLF
-        Case 3 'EUC   → SJIS
-            sCharset = "euc-jp"
-            nLineSeparator = 10 'adLF
-        Case 4 'JIS   → SJIS
-            sCharset = "iso-2022-jp"
-            nLineSeparator = 10 'adLF
-        Case 5 'SJIS  → SJIS
-            sCharset = "shift_jis"
-            nLineSeparator = -1 'adCRLF
-        End Select
-        
-        'テンポラリファイルを読み込んでローカルレコードセットに追加
-        Set TMP = CreateObject("ADODB.Stream")
-        With TMP
+    Case 2 'UTF-8 → SJIS
+        sCharset = "utf-8"
+        nLineSeparator = 10 'adLF
+    Case 3 'EUC   → SJIS
+        sCharset = "euc-jp"
+        nLineSeparator = 10 'adLF
+    Case 4 'JIS   → SJIS
+        sCharset = "iso-2022-jp"
+        nLineSeparator = 10 'adLF
+    Case 1, 5 '何も変換しない、SJIS  → SJIS
+        sCharset = "shift_jis"
+        nLineSeparator = -1 'adCRLF
+    End Select
+    
+    '入力セル範囲リダイレクト指定有り
+    Dim sInp
+    If csRangeRedirectIn <> "" Then
+        'セル範囲内容を書き込んだ入力テンポラリファイルを作成
+        Dim INP, oRow
+        Set INP = CreateObject("ADODB.Stream")
+        With INP
             .Charset = sCharset
             .LineSeparator = nLineSeparator
             .Open
-            Call .LoadFromFile(sTmp)
-            
-            '1行目の読み込み
-            If Not .EOS Then
-                sLine = .Readtext(-2) 'adReadLine
-                'Debug.Print sLine
-                
-                'フィールド区切り
-                If nFieldSep = 1 Then 'なし
-                    '1行目をタイトル行
-                    If nFirstRowTitle = 1 Then 'としない
-                        sFieldName = "Line"
-                    Else
-                        sFieldName = sLine
-                    End If
-                    argRs.Fields.Append sFieldName, 202, ccMaxShFldLen 'adVarWChar, 最大桁数
-                    nFieldCnt = 1
-                Else
-                    '行をフィールドに分割
-                    Select Case nFieldSep
-                    Case 2 '連続した空白文字
-                        arFields = SplitSh(sLine)
-                    Case 3 'カンマ
-                        arFields = SplitCsv(sLine)
-                    Case 4 'タブ文字
-                        arFields = Split(sLine, " ")
-                    End Select
-                    
-                    'フィールド数に応じてローカルレコードセットにフィールド追加
-                    For i = 0 To UBound(arFields)
-                        '1行目をタイトル行
-                        If nFirstRowTitle = 1 Then 'としない
-                            sFieldName = "Filed" & (i + 1)
-                        Else
-                            sFieldName = arFields(i)
-                        End If
-                        argRs.Fields.Append sFieldName, 202, ccMaxShFldLen 'adVarWChar, 最大桁数
-                    Next
-                    nFieldCnt = argRs.Fields.Count
-                End If
-                
-                'ローカルレコードセットをオープン
-                argRs.Open
-                
-                '1行目をタイトル行としない場合
-                If nFirstRowTitle = 1 Then
-                    '1行目のレコード追加
-                    argRs.AddNew
-                    
-                    'フィールド区切り
-                    If nFieldSep = 1 Then 'なし
-                        argRs(0) = sLine
-                    Else
-                        '列数に応じてフィールド値セット
-                        For i = 0 To nFieldCnt - 1
-                            argRs(i) = arFields(i)
-                        Next
-                    End If
-                    
-                    '1行目のレコード登録
-                    argRs.Update
-                End If
-               
-            Else '結果データレコード無し
-                'フィールド区切り
-                If nFieldSep = 1 Then 'なし
-                    argRs.Fields.Append "Line", 202 'adVarWChar
-                Else
-                    argRs.Fields.Append "Field1", 202 'adVarWChar
-                End If
-                argRs.Open
-            End If
-            
-            '2行目以降の読み込み
-            Do Until .EOS
-                sLine = .Readtext(-2) 'adReadLine
-                'Debug.Print sLine
-                
-                argRs.AddNew
-                
-                'フィールド区切り
-                If nFieldSep = 1 Then 'なし
-                    argRs(0) = sLine
-                Else
-                    '行をフィールドに分割
-                    Select Case nFieldSep
-                    Case 2 '連続した空白文字
-                        arFields = SplitSh(sLine)
-                    Case 3 'カンマ
-                        arFields = SplitCsv(sLine)
-                    Case 4 'タブ文字
-                        arFields = Split(sLine, " ")
-                    End Select
-                    
-                    nArrayCnt = UBound(arFields) + 1
-                    
-                    '列数に応じてフィールド値セット
-                    For i = 0 To nFieldCnt - 1
-                        If i <= nArrayCnt - 1 Then
-                            argRs(i) = arFields(i)
-                        End If
-                    Next
-                End If
-                
-                argRs.Update
-            Loop
+            For Each oRow In Range(csRangeRedirectIn).Rows
+                .WriteText Join(WorksheetFunction.Index(oRow.Value, 1, 0), vbTab), 1 'adWriteLine
+            Next
+            sInp = coFSO.BuildPath(coFSO.GetSpecialFolder(2), coFSO.GetTempName)
+            .SaveToFile sInp ', 2 'adSaveCreateOverWrite
             .Close
         End With
-    Case Else '1 「何も変換しない」
+        '入力テンポラリファイルをローカルシェルにパイプ入力
+        sCmd = "CMD /C TYPE " & sInp & " | " & sCmd
+    End If
+    
+    'コマンド実行
+    Debug.Print sCmd
+    Call coWSH.Run(sCmd, vbHide, True)
+    
+    '入力セル範囲リダイレクト指定有り
+    If csRangeRedirectIn <> "" Then
+        Call coFSO.DeleteFile(sInp)
+    End If
+    
+    'ローカルレコードセット作成
+    Set argRs = CreateObject("ADODB.Recordset")
+    
+    '何も変換しない or 読み込み方式に応じて変換
+    If nOutCnv = 1 Then
+        '1 何も変換しない
         'テンポラリファイルを読み込んでローカルレコードセットに追加
         Set TMP = coFSO.OpenTextFile(sTmp, 1, False)
-
+        
         '1行目の読み込み
         If Not TMP.AtEndOfStream Then
             sLine = TMP.ReadLine
@@ -3624,7 +3574,7 @@ Private Function ExecShell(argCmd, argRs, argFlds, Optional argConHost = "", Opt
                 Case 3 'カンマ
                     arFields = SplitCsv(sLine)
                 Case 4 'タブ文字
-                    arFields = Split(sLine, " ")
+                    arFields = Split(sLine, vbTab)
                 End Select
                 
                 'フィールド数に応じてローカルレコードセットにフィールド追加
@@ -3690,7 +3640,7 @@ Private Function ExecShell(argCmd, argRs, argFlds, Optional argConHost = "", Opt
                 Case 3 'カンマ
                     arFields = SplitCsv(sLine)
                 Case 4 'タブ文字
-                    arFields = Split(sLine, " ")
+                    arFields = Split(sLine, vbTab)
                 End Select
                 
                 nArrayCnt = UBound(arFields) + 1
@@ -3706,7 +3656,123 @@ Private Function ExecShell(argCmd, argRs, argFlds, Optional argConHost = "", Opt
             argRs.Update
         Loop
         TMP.Close
-    End Select
+    Else
+        '2「UTF-8 → SJIS」～5「SJIS  → SJIS」
+        'テンポラリファイルを読み込んでローカルレコードセットに追加
+        Set TMP = CreateObject("ADODB.Stream")
+        With TMP
+            .Charset = sCharset
+            .LineSeparator = nLineSeparator
+            .Open
+            Call .LoadFromFile(sTmp)
+            
+            '1行目の読み込み
+            If Not .EOS Then
+                sLine = .Readtext(-2) 'adReadLine
+                'Debug.Print sLine
+                
+                'フィールド区切り
+                If nFieldSep = 1 Then 'なし
+                    '1行目をタイトル行
+                    If nFirstRowTitle = 1 Then 'としない
+                        sFieldName = "Line"
+                    Else
+                        sFieldName = sLine
+                    End If
+                    argRs.Fields.Append sFieldName, 202, ccMaxShFldLen 'adVarWChar, 最大桁数
+                    nFieldCnt = 1
+                Else
+                    '行をフィールドに分割
+                    Select Case nFieldSep
+                    Case 2 '連続した空白文字
+                        arFields = SplitSh(sLine)
+                    Case 3 'カンマ
+                        arFields = SplitCsv(sLine)
+                    Case 4 'タブ文字
+                        arFields = Split(sLine, vbTab)
+                    End Select
+                    
+                    'フィールド数に応じてローカルレコードセットにフィールド追加
+                    For i = 0 To UBound(arFields)
+                        '1行目をタイトル行
+                        If nFirstRowTitle = 1 Then 'としない
+                            sFieldName = "Filed" & (i + 1)
+                        Else
+                            sFieldName = arFields(i)
+                        End If
+                        argRs.Fields.Append sFieldName, 202, ccMaxShFldLen 'adVarWChar, 最大桁数
+                    Next
+                    nFieldCnt = argRs.Fields.Count
+                End If
+                
+                'ローカルレコードセットをオープン
+                argRs.Open
+                
+                '1行目をタイトル行としない場合
+                If nFirstRowTitle = 1 Then
+                    '1行目のレコード追加
+                    argRs.AddNew
+                    
+                    'フィールド区切り
+                    If nFieldSep = 1 Then 'なし
+                        argRs(0) = sLine
+                    Else
+                        '列数に応じてフィールド値セット
+                        For i = 0 To nFieldCnt - 1
+                            argRs(i) = arFields(i)
+                        Next
+                    End If
+                    
+                    '1行目のレコード登録
+                    argRs.Update
+                End If
+               
+            Else '結果データレコード無し
+                'フィールド区切り
+                If nFieldSep = 1 Then 'なし
+                    argRs.Fields.Append "Line", 202 'adVarWChar
+                Else
+                    argRs.Fields.Append "Field1", 202 'adVarWChar
+                End If
+                argRs.Open
+            End If
+            
+            '2行目以降の読み込み
+            Do Until .EOS
+                sLine = .Readtext(-2) 'adReadLine
+                'Debug.Print sLine
+                
+                argRs.AddNew
+                
+                'フィールド区切り
+                If nFieldSep = 1 Then 'なし
+                    argRs(0) = sLine
+                Else
+                    '行をフィールドに分割
+                    Select Case nFieldSep
+                    Case 2 '連続した空白文字
+                        arFields = SplitSh(sLine)
+                    Case 3 'カンマ
+                        arFields = SplitCsv(sLine)
+                    Case 4 'タブ文字
+                        arFields = Split(sLine, vbTab)
+                    End Select
+                    
+                    nArrayCnt = UBound(arFields) + 1
+                    
+                    '列数に応じてフィールド値セット
+                    For i = 0 To nFieldCnt - 1
+                        If i <= nArrayCnt - 1 Then
+                            argRs(i) = arFields(i)
+                        End If
+                    Next
+                End If
+                
+                argRs.Update
+            Loop
+            .Close
+        End With
+    End If
     
     argRs.MoveFirst
     
@@ -4218,7 +4284,7 @@ Private Function MakeList(argStart, argRs, argFlds, argOpts)
             End Select
         Next
         
-        .Range("A1").Select
+'        .Range("A1").Select '☆何故入れてたのだっけか？ 不要なら削除
         With .Range(.Cells(nMinRow, nMinCol), .Cells(nMaxRow, nMaxCol))
             If InStr(argOpts.Item("スタイル"), "空白セル強調") <> 0 Then
 '                With .FormatConditions.Add(Type:=xlExpression, _
